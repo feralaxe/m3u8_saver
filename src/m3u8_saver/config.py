@@ -30,6 +30,10 @@ class Settings:
     transcode_video: bool
     preferred_accel: str
     default_user_agent: str
+    log_level: str
+    log_file: Path | None
+    log_max_bytes: int
+    log_backup_count: int
 
     @property
     def database_path(self) -> Path:
@@ -62,4 +66,8 @@ def load_settings() -> Settings:
             "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
             "(KHTML, like Gecko) Chrome/125 Safari/537.36",
         ),
+        log_level=os.getenv("LOG_LEVEL", "INFO").strip().upper(),
+        log_file=Path(log_file).resolve() if (log_file := os.getenv("LOG_FILE", "").strip()) else None,
+        log_max_bytes=int(os.getenv("LOG_MAX_BYTES", str(10 * 1024 * 1024))),
+        log_backup_count=int(os.getenv("LOG_BACKUP_COUNT", "5")),
     )
