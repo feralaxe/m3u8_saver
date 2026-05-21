@@ -1,0 +1,19 @@
+services:
+  bot:
+    build: .
+    env_file: .env
+    restart: unless-stopped
+    volumes:
+      - ./data:/app/data
+      - /tmp/m3u8-saver:/tmp/m3u8-saver
+    # For NVIDIA later, install NVIDIA Container Toolkit on the host and uncomment:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu, video]
+    # For Intel/AMD VAAPI later, pass the render device:
+    # devices:
+    #   - /dev/dri:/dev/dri
