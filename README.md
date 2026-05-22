@@ -254,6 +254,35 @@ Show the last 200 lines:
 tail -n 200 /opt/m3u8_saver/data/bot.log
 ```
 
+### HTTP 498 from Wildberries/Wibes
+
+If logs show something like:
+
+```text
+Source site rejected the request with HTTP 498
+```
+
+the source website rejected the bot before the page could be parsed. Wildberries/Wibes may require a real browser session, region/IP checks, or a temporary token. This is not an ffmpeg error; it happens before the bot finds any `.m3u8` URL.
+
+Try these in order:
+
+1. Open the page in your browser, use Developer Tools -> Network, filter for `m3u8`, and send the direct `.m3u8` URL to the bot.
+2. If the media requires your own logged-in browser session, copy only the needed cookie values from your browser and set them in `.env`:
+
+```env
+SOURCE_COOKIE=sessionid=abc; other_cookie=xyz
+```
+
+Then restart:
+
+```bash
+docker compose up -d
+```
+
+3. If the site still returns `498`, the server is blocking the container IP/client. The bot cannot parse that page unless the source site allows server-side access to the page or playlist.
+
+Do not put cookies from accounts you do not own into the bot. Cookies are sensitive secrets; keep `.env` private.
+
 ### 8. Update later
 
 ```bash

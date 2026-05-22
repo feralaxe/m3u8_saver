@@ -21,11 +21,22 @@ def build_ffmpeg_command(
     playlist_url: str,
     output_path: Path,
     user_agent: str,
+    accept_language: str,
+    cookie: str,
+    referer: str,
     transcode: bool,
     preferred_accel: str,
 ) -> tuple[list[str], str]:
     ensure_ffmpeg()
-    headers = f"User-Agent: {user_agent}\r\n"
+    header_lines = [
+        f"User-Agent: {user_agent}",
+        f"Accept-Language: {accept_language}",
+    ]
+    if referer:
+        header_lines.append(f"Referer: {referer}")
+    if cookie:
+        header_lines.append(f"Cookie: {cookie}")
+    headers = "\r\n".join(header_lines) + "\r\n"
     command = [
         "ffmpeg",
         "-hide_banner",
@@ -63,6 +74,9 @@ async def download_playlist(
     playlist_url: str,
     output_path: Path,
     user_agent: str,
+    accept_language: str,
+    cookie: str,
+    referer: str,
     timeout_seconds: int,
     max_video_bytes: int,
     transcode: bool,
@@ -72,6 +86,9 @@ async def download_playlist(
         playlist_url=playlist_url,
         output_path=output_path,
         user_agent=user_agent,
+        accept_language=accept_language,
+        cookie=cookie,
+        referer=referer,
         transcode=transcode,
         preferred_accel=preferred_accel,
     )

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+import logging
 import re
 from dataclasses import dataclass
 from urllib.parse import parse_qsl, unquote, urljoin, urlparse, urlunparse
@@ -8,6 +9,8 @@ from urllib.parse import parse_qsl, unquote, urljoin, urlparse, urlunparse
 import httpx
 from bs4 import BeautifulSoup
 
+
+LOGGER = logging.getLogger(__name__)
 
 M3U8_PATTERN = re.compile(
     r"""(?P<url>(?:https?:)?//[^\s"'<>\\]+?\.m3u8(?:\?[^\s"'<>\\]*)?|[^\s"'<>\\]+?\.m3u8(?:\?[^\s"'<>\\]*)?)""",
@@ -20,6 +23,10 @@ class VideoCandidate:
     title: str
     playlist_url: str
     source_url: str
+
+
+class DiscoveryError(RuntimeError):
+    pass
 
 
 def normalize_url(url: str) -> str:
@@ -71,12 +78,65 @@ def extract_m3u8_urls(page_text: str, base_url: str) -> list[str]:
     return list(dict.fromkeys(candidates))
 
 
-async def discover_videos(url: str, timeout: float, user_agent: str) -> list[VideoCandidate]:
+def build_source_headers(
+    user_agent: str,
+    accept_language: str,
+    cookie: str = "",
+    referer: str | None = None,
+) -> dict[str, str]:
+    headers = {
+        "User-Agent": user_agent,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": accept_language,
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
+        "Upgrade-Insecure-Requests": "1",
+    }
+    if referer:
+        headers["Referer"] = referer
+    if cookie:
+        headers["Cookie"] = cookie
+    return headers
+
+
+def _status_error_message(response: httpx.Response) -> str:
+    status = response.status_code
+    url = str(response.url)
+    if status == 498:
+        return (
+            f"Source site rejected the request with HTTP 498 for {url}. "
+            "This usually means the site expects a real browser session, region/IP checks, "
+            "or a temporary anti-bot token. Try sending a direct .m3u8 URL, or set SOURCE_COOKIE "
+            "from your own browser session if you are allowed to access this media."
+        )
+    return f"Source site returned HTTP {status} for {url}."
+
+
+async def discover_videos(
+    url: str,
+    timeout: float,
+    user_agent: str,
+    accept_language: str,
+    cookie: str = "",
+) -> list[VideoCandidate]:
     source_url = normalize_url(url)
-    headers = {"User-Agent": user_agent, "Accept": "text/html,application/xhtml+xml,*/*"}
+    headers = build_source_headers(
+        user_agent=user_agent,
+        accept_language=accept_language,
+        cookie=cookie,
+        referer=source_url,
+    )
     async with httpx.AsyncClient(timeout=timeout, follow_redirects=True, headers=headers) as client:
         response = await client.get(source_url)
-        response.raise_for_status()
+        if response.status_code >= 400:
+            LOGGER.warning(
+                "source returned error status=%s url=%s content_type=%s body_prefix=%r",
+                response.status_code,
+                response.url,
+                response.headers.get("content-type", ""),
+                response.text[:300],
+            )
+            raise DiscoveryError(_status_error_message(response))
         final_url = str(response.url)
         content_type = response.headers.get("content-type", "")
         text = response.text

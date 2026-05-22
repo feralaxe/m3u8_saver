@@ -21,7 +21,7 @@ from telegram.ext import (
 
 from .access import AccessPolicy, AccessStore
 from .config import Settings, load_settings
-from .discovery import VideoCandidate, discover_videos
+from .discovery import DiscoveryError, VideoCandidate, discover_videos
 from .ffmpeg import FfmpegError, download_playlist
 from .logging_setup import configure_logging
 
@@ -178,7 +178,18 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             url,
             timeout=state.settings.http_timeout_seconds,
             user_agent=state.settings.default_user_agent,
+            accept_language=state.settings.default_accept_language,
+            cookie=state.settings.source_cookie,
         )
+    except DiscoveryError as exc:
+        LOGGER.warning(
+            "discover rejected user_id=%s url=%s reason=%s",
+            user_id,
+            _safe_url_for_log(url),
+            exc,
+        )
+        await update.effective_message.reply_text(str(exc))
+        return
     except Exception as exc:
         LOGGER.exception("discover failed user_id=%s url=%s", user_id, _safe_url_for_log(url))
         await update.effective_message.reply_text(f"Could not parse that URL: {exc}")
@@ -250,6 +261,9 @@ async def download_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             playlist_url=candidate.playlist_url,
             output_path=output_path,
             user_agent=state.settings.default_user_agent,
+            accept_language=state.settings.default_accept_language,
+            cookie=state.settings.source_cookie,
+            referer=candidate.source_url,
             timeout_seconds=state.settings.ffmpeg_timeout_seconds,
             max_video_bytes=state.settings.max_video_bytes,
             transcode=state.settings.transcode_video,

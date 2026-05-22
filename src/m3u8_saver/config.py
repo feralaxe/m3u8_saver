@@ -30,6 +30,8 @@ class Settings:
     transcode_video: bool
     preferred_accel: str
     default_user_agent: str
+    default_accept_language: str
+    source_cookie: str
     log_level: str
     log_file: Path | None
     log_max_bytes: int
@@ -66,6 +68,11 @@ def load_settings() -> Settings:
             "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
             "(KHTML, like Gecko) Chrome/125 Safari/537.36",
         ),
+        default_accept_language=os.getenv(
+            "DEFAULT_ACCEPT_LANGUAGE",
+            "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
+        ),
+        source_cookie=os.getenv("SOURCE_COOKIE", "").strip(),
         log_level=os.getenv("LOG_LEVEL", "INFO").strip().upper(),
         log_file=Path(log_file).resolve() if (log_file := os.getenv("LOG_FILE", "").strip()) else None,
         log_max_bytes=int(os.getenv("LOG_MAX_BYTES", str(10 * 1024 * 1024))),
