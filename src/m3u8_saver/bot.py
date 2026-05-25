@@ -24,6 +24,7 @@ from .config import Settings, load_settings
 from .discovery import DiscoveryError, VideoCandidate, discover_videos
 from .ffmpeg import FfmpegError, download_playlist
 from .logging_setup import configure_logging
+from .youtube import YouTubeError, YouTubeVideo, download_youtube, inspect_youtube, is_youtube_url
 
 
 URL_PATTERN = re.compile(r"https?://\S+|(?:[\w-]+\.)+[\w-]{2,}\S*", re.IGNORECASE)
@@ -47,6 +48,7 @@ class BotState:
             settings.permanent_allowed_user_ids,
         )
         self.candidates: dict[str, VideoCandidate] = {}
+        self.youtube_candidates: dict[str, YouTubeVideo] = {}
 
 
 def _state(context: ContextTypes.DEFAULT_TYPE) -> BotState:
@@ -172,6 +174,10 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         return
 
     await update.effective_chat.send_action(ChatAction.TYPING)
+    if is_youtube_url(url):
+        await handle_youtube_url(update, context, user_id, url)
+        return
+
     LOGGER.info("discover start user_id=%s url=%s", user_id, _safe_url_for_log(url))
     try:
         candidates = await discover_videos(
@@ -215,6 +221,51 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     await update.effective_message.reply_text(
         "Found these videos:",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+
+
+async def handle_youtube_url(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    user_id: int,
+    url: str,
+) -> None:
+    state = _state(context)
+    LOGGER.info("youtube inspect start user_id=%s url=%s", user_id, _safe_url_for_log(url))
+    try:
+        video = await inspect_youtube(url, cookie=state.settings.youtube_cookie)
+    except YouTubeError as exc:
+        LOGGER.warning("youtube inspect rejected user_id=%s url=%s reason=%s", user_id, _safe_url_for_log(url), exc)
+        await update.effective_message.reply_text(str(exc))
+        return
+    except Exception as exc:
+        LOGGER.exception("youtube inspect failed user_id=%s url=%s", user_id, _safe_url_for_log(url))
+        await update.effective_message.reply_text(f"Could not inspect YouTube video: {exc}")
+        return
+
+    key = f"{user_id}:{len(state.youtube_candidates)}"
+    state.youtube_candidates[key] = video
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                quality.label,
+                callback_data=f"youtube:{key}:{quality.id}",
+            )
+        ]
+        for quality in video.qualities
+    ]
+
+    LOGGER.info(
+        "youtube inspect complete user_id=%s url=%s title=%r max_height=%s qualities=%s",
+        user_id,
+        _safe_url_for_log(url),
+        video.title,
+        video.max_height,
+        ",".join(quality.id for quality in video.qualities),
+    )
+    await update.effective_message.reply_text(
+        f"YouTube video can be downloaded:\n{video.title}\n\nChoose quality:",
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
 
@@ -300,6 +351,87 @@ async def download_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         LOGGER.info("cleanup complete user_id=%s work_dir=%s", user_id, work_dir)
 
 
+async def download_youtube_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    state = _state(context)
+    query = update.callback_query
+    if not query or not query.data:
+        return
+
+    await query.answer()
+    user_id = _user_id(update)
+    if user_id is None or not state.access.can_use(user_id):
+        LOGGER.warning("youtube download rejected user_id=%s reason=not_allowed", user_id)
+        await query.edit_message_text("Access is not active for your Telegram account.")
+        return
+
+    parts = query.data.split(":", maxsplit=3)
+    if len(parts) != 4:
+        LOGGER.info("youtube download rejected user_id=%s reason=bad_callback", user_id)
+        await query.edit_message_text("This YouTube choice expired. Please send the URL again.")
+        return
+    _, owner_id, candidate_id, quality_id = parts
+    key = f"{owner_id}:{candidate_id}"
+    if int(owner_id) != user_id:
+        LOGGER.warning("youtube download rejected user_id=%s reason=wrong_owner owner=%s", user_id, owner_id)
+        await query.edit_message_text("This video choice belongs to another user.")
+        return
+
+    video = state.youtube_candidates.get(key)
+    if not video:
+        LOGGER.info("youtube download rejected user_id=%s reason=expired_choice", user_id)
+        await query.edit_message_text("This YouTube choice expired. Please send the URL again.")
+        return
+
+    quality = next((item for item in video.qualities if item.id == quality_id), None)
+    if not quality:
+        LOGGER.info("youtube download rejected user_id=%s reason=unknown_quality quality=%s", user_id, quality_id)
+        await query.edit_message_text("This quality choice is no longer available. Please send the URL again.")
+        return
+
+    await query.edit_message_text(f"Downloading {video.title} at {quality.label}. This may take a while.")
+    await context.bot.send_chat_action(chat_id=query.message.chat_id, action=ChatAction.UPLOAD_DOCUMENT)
+
+    work_dir = Path(tempfile.mkdtemp(prefix="youtube-", dir=state.settings.temp_dir))
+    LOGGER.info(
+        "youtube download start user_id=%s url=%s quality=%s work_dir=%s",
+        user_id,
+        _safe_url_for_log(video.webpage_url),
+        quality.id,
+        work_dir,
+    )
+    try:
+        output_path = await download_youtube(
+            url=video.webpage_url,
+            output_dir=work_dir,
+            quality=quality,
+            cookie=state.settings.youtube_cookie,
+            max_video_bytes=state.settings.max_video_bytes,
+        )
+        output_size = output_path.stat().st_size
+        LOGGER.info("youtube download complete user_id=%s quality=%s bytes=%s", user_id, quality.id, output_size)
+        with output_path.open("rb") as video_file:
+            LOGGER.info("youtube upload start user_id=%s bytes=%s", user_id, output_size)
+            await context.bot.send_document(
+                chat_id=query.message.chat_id,
+                document=video_file,
+                filename=output_path.name,
+                caption=f"Done. YouTube quality: {quality.label}.",
+                read_timeout=state.settings.ffmpeg_timeout_seconds,
+                write_timeout=state.settings.ffmpeg_timeout_seconds,
+            )
+        LOGGER.info("youtube upload complete user_id=%s bytes=%s", user_id, output_size)
+    except YouTubeError as exc:
+        LOGGER.exception("youtube download failed user_id=%s url=%s", user_id, _safe_url_for_log(video.webpage_url))
+        await context.bot.send_message(chat_id=query.message.chat_id, text=f"YouTube download failed: {exc}")
+    except Exception as exc:
+        LOGGER.exception("youtube upload failed user_id=%s", user_id)
+        await context.bot.send_message(chat_id=query.message.chat_id, text=f"Upload failed: {exc}")
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
+        state.youtube_candidates.pop(key, None)
+        LOGGER.info("youtube cleanup complete user_id=%s work_dir=%s", user_id, work_dir)
+
+
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     LOGGER.exception("Telegram handler error", exc_info=context.error)
 
@@ -313,6 +445,7 @@ def build_application(settings: Settings) -> Application:
     application.add_handler(CommandHandler("revoke", revoke))
     application.add_handler(CommandHandler("allowforever", allow_forever))
     application.add_handler(CommandHandler("unallowforever", unallow_forever))
+    application.add_handler(CallbackQueryHandler(download_youtube_choice, pattern=r"^youtube:"))
     application.add_handler(CallbackQueryHandler(download_choice, pattern=r"^download:"))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_url))
     application.add_error_handler(error_handler)

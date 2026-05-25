@@ -32,6 +32,7 @@ class Settings:
     default_user_agent: str
     default_accept_language: str
     source_cookie: str
+    youtube_cookie: str
     log_level: str
     log_file: Path | None
     log_max_bytes: int
@@ -73,6 +74,7 @@ def load_settings() -> Settings:
             "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
         ),
         source_cookie=os.getenv("SOURCE_COOKIE", "").strip(),
+        youtube_cookie=os.getenv("YOUTUBE_COOKIE", "").strip(),
         log_level=os.getenv("LOG_LEVEL", "INFO").strip().upper(),
         log_file=Path(log_file).resolve() if (log_file := os.getenv("LOG_FILE", "").strip()) else None,
         log_max_bytes=int(os.getenv("LOG_MAX_BYTES", str(10 * 1024 * 1024))),

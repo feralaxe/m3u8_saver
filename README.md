@@ -1,12 +1,13 @@
 # m3u8_saver
 
-Telegram bot backend that finds `.m3u8` playlists on a submitted page, lets an allowed user choose one, downloads/remuxes it to MP4 with ffmpeg, sends the file back, and deletes temporary files immediately afterwards.
+Telegram bot backend that finds `.m3u8` playlists or supported YouTube videos from a submitted URL, lets an allowed user choose what to download, sends the file back, and deletes temporary files immediately afterwards.
 
 ## Features
 
 - Telegram polling bot, suitable for Docker or an LXC VM.
 - URL scanner for direct `.m3u8` links and playlists embedded in HTML.
 - Inline buttons for choosing from found playlists.
+- YouTube links with Best/Medium/Low quality buttons based on available source quality.
 - ffmpeg download and MP4 remux, with optional hardware-accelerated transcoding.
 - Temporary per-download working folders removed in `finally`, even after failures.
 - SQLite-backed subscriptions plus permanent allow-list users.
@@ -201,6 +202,16 @@ In Telegram, send:
 
 Then send a page URL or direct `.m3u8` URL.
 
+For YouTube, send a normal YouTube URL. The bot checks available formats first and then shows quality buttons:
+
+```text
+Best: highest source quality, shown only if the source is above 720p
+Medium: up to 720p, shown when a 720p-level source exists
+Low: up to 480p
+```
+
+If the best available source is 720p, the bot hides `Best`. If the best available source is 480p or lower, it shows only `Low`.
+
 ### 6. Manage access
 
 Allow a user permanently:
@@ -291,6 +302,8 @@ git pull
 docker compose up --build -d
 docker compose logs -f bot
 ```
+
+Use `--build` after updates that change Python dependencies, such as the YouTube support added through `yt-dlp`.
 
 ### 9. Future GPU notes
 
@@ -410,8 +423,36 @@ PREFERRED_ACCEL=auto
 
 The bot will inspect available ffmpeg encoders and use NVIDIA NVENC, Intel QSV/VAAPI, AMD VAAPI/AMF, or software x264 as a fallback. For a future NVIDIA P1000/P2000 Docker setup, install NVIDIA Container Toolkit on the host and enable the NVIDIA device block in `docker-compose.yml`.
 
+## YouTube
+
+YouTube support uses `yt-dlp` to inspect and download formats. ffmpeg is still used inside the container to merge separate video and audio tracks into MP4.
+
+Send a YouTube URL to the bot. If the video can be inspected, the bot replies with quality buttons:
+
+```text
+Best
+Medium (720p)
+Low (480p)
+```
+
+The buttons depend on the available source formats:
+
+```text
+1080p or higher source: Best, Medium, Low
+720p maximum source: Medium, Low
+480p or lower maximum source: Low only
+```
+
+Optional YouTube cookies can be set in `.env` if YouTube requires your own browser session:
+
+```env
+YOUTUBE_COOKIE=session_cookie=value; another_cookie=value
+```
+
+Keep cookies private. Only download videos you own, videos licensed for download, or videos you otherwise have permission to download.
+
 ## Important limits
 
 Telegram bot uploads have platform limits. Large videos may fail to upload even if ffmpeg produced them correctly. `MAX_VIDEO_BYTES` protects your server disk space before upload.
 
-Some websites protect media URLs with cookies, DRM, expiring tokens, or JavaScript-only playback. This bot handles ordinary HTML-embedded and direct `.m3u8` URLs, but it does not bypass DRM or login restrictions.
+Some websites protect media URLs with cookies, DRM, expiring tokens, or JavaScript-only playback. This bot handles ordinary HTML-embedded `.m3u8` URLs, direct `.m3u8` URLs, and supported YouTube URLs, but it does not bypass DRM or login restrictions.
