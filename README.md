@@ -166,17 +166,30 @@ Set at least:
 
 ```env
 TELEGRAM_BOT_TOKEN=your_bot_token_from_botfather
+TELEGRAM_API_ID=your_api_id_from_my_telegram_org
+TELEGRAM_API_HASH=your_api_hash_from_my_telegram_org
+TELEGRAM_API_BASE_URL=http://telegram-bot-api:8081/bot
+TELEGRAM_API_BASE_FILE_URL=http://telegram-bot-api:8081/file/bot
 ADMIN_USER_IDS=your_telegram_user_id
 PERMANENT_ALLOWED_USER_IDS=your_telegram_user_id
 DATA_DIR=/app/data
 TEMP_DIR=/tmp/m3u8-saver
+TELEGRAM_MAX_UPLOAD_BYTES=2000000000
 TRANSCODE_VIDEO=false
 PREFERRED_ACCEL=auto
 LOG_LEVEL=INFO
 LOG_FILE=/app/data/bot.log
 ```
 
-You can get your Telegram user id by messaging the bot with `/id` after it starts, or by using a Telegram user-info bot.
+Get `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` from https://my.telegram.org/apps. You can get your Telegram user id by messaging the bot with `/id` after it starts, or by using a Telegram user-info bot.
+
+Before moving an existing bot from the public Bot API to the local Bot API server, log it out from the public API once:
+
+```bash
+curl "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/logOut"
+```
+
+After that, start the compose stack. The bot will talk to the local `telegram-bot-api` service instead of `api.telegram.org`.
 
 ### 5. Start the bot
 
@@ -454,5 +467,21 @@ Keep cookies private. Only download videos you own, videos licensed for download
 ## Important limits
 
 Telegram bot uploads have platform limits. Large videos may fail to upload even if ffmpeg produced them correctly. `MAX_VIDEO_BYTES` protects your server disk space before upload.
+
+The public Telegram Bot API rejects large uploads with `413 Request Entity Too Large`. The default upload limit is:
+
+```env
+TELEGRAM_MAX_UPLOAD_BYTES=50000000
+```
+
+This project can run a local Telegram Bot API server with Docker. In that mode, set:
+
+```env
+TELEGRAM_API_BASE_URL=http://telegram-bot-api:8081/bot
+TELEGRAM_API_BASE_FILE_URL=http://telegram-bot-api:8081/file/bot
+TELEGRAM_MAX_UPLOAD_BYTES=2000000000
+```
+
+If a YouTube download is larger than `TELEGRAM_MAX_UPLOAD_BYTES`, the bot deletes the temporary file and asks the user to try a lower quality.
 
 Some websites protect media URLs with cookies, DRM, expiring tokens, or JavaScript-only playback. This bot handles ordinary HTML-embedded `.m3u8` URLs, direct `.m3u8` URLs, and supported YouTube URLs, but it does not bypass DRM or login restrictions.

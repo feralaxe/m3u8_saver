@@ -31,11 +31,29 @@ URL_PATTERN = re.compile(r"https?://\S+|(?:[\w-]+\.)+[\w-]{2,}\S*", re.IGNORECAS
 LOGGER = logging.getLogger(__name__)
 
 
+class UploadTooLargeError(RuntimeError):
+    pass
+
+
 def _safe_url_for_log(url: str) -> str:
     parsed = urlparse(url)
     if not parsed.netloc:
         return url[:200]
     return parsed._replace(query="", fragment="").geturl()[:200]
+
+
+def _format_bytes(size: int) -> str:
+    return f"{size / (1024 * 1024):.1f} MB"
+
+
+def _ensure_upload_size(output_path: Path, limit_bytes: int) -> int:
+    size = output_path.stat().st_size
+    if size > limit_bytes:
+        raise UploadTooLargeError(
+            f"Downloaded file is {_format_bytes(size)}, but this bot can upload only "
+            f"{_format_bytes(limit_bytes)} through Telegram. Try a lower quality."
+        )
+    return size
 
 
 class BotState:
@@ -320,7 +338,7 @@ async def download_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             transcode=state.settings.transcode_video,
             preferred_accel=state.settings.preferred_accel,
         )
-        output_size = output_path.stat().st_size
+        output_size = _ensure_upload_size(output_path, state.settings.telegram_max_upload_bytes)
         LOGGER.info(
             "download complete user_id=%s mode=%s bytes=%s",
             user_id,
@@ -342,6 +360,9 @@ async def download_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     except FfmpegError as exc:
         LOGGER.exception("ffmpeg failed user_id=%s playlist=%s", user_id, _safe_url_for_log(candidate.playlist_url))
         await context.bot.send_message(chat_id=query.message.chat_id, text=f"Download failed: {exc}")
+    except UploadTooLargeError as exc:
+        LOGGER.warning("upload skipped user_id=%s reason=file_too_large message=%s", user_id, exc)
+        await context.bot.send_message(chat_id=query.message.chat_id, text=str(exc))
     except Exception as exc:
         LOGGER.exception("download/upload failed user_id=%s", user_id)
         await context.bot.send_message(chat_id=query.message.chat_id, text=f"Upload failed: {exc}")
@@ -405,9 +426,9 @@ async def download_youtube_choice(update: Update, context: ContextTypes.DEFAULT_
             output_dir=work_dir,
             quality=quality,
             cookie=state.settings.youtube_cookie,
-            max_video_bytes=state.settings.max_video_bytes,
+            max_video_bytes=min(state.settings.max_video_bytes, state.settings.telegram_max_upload_bytes),
         )
-        output_size = output_path.stat().st_size
+        output_size = _ensure_upload_size(output_path, state.settings.telegram_max_upload_bytes)
         LOGGER.info("youtube download complete user_id=%s quality=%s bytes=%s", user_id, quality.id, output_size)
         with output_path.open("rb") as video_file:
             LOGGER.info("youtube upload start user_id=%s bytes=%s", user_id, output_size)
@@ -423,6 +444,9 @@ async def download_youtube_choice(update: Update, context: ContextTypes.DEFAULT_
     except YouTubeError as exc:
         LOGGER.exception("youtube download failed user_id=%s url=%s", user_id, _safe_url_for_log(video.webpage_url))
         await context.bot.send_message(chat_id=query.message.chat_id, text=f"YouTube download failed: {exc}")
+    except UploadTooLargeError as exc:
+        LOGGER.warning("youtube upload skipped user_id=%s reason=file_too_large message=%s", user_id, exc)
+        await context.bot.send_message(chat_id=query.message.chat_id, text=str(exc))
     except Exception as exc:
         LOGGER.exception("youtube upload failed user_id=%s", user_id)
         await context.bot.send_message(chat_id=query.message.chat_id, text=f"Upload failed: {exc}")
@@ -437,7 +461,13 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 def build_application(settings: Settings) -> Application:
-    application = Application.builder().token(settings.telegram_bot_token).build()
+    builder = Application.builder().token(settings.telegram_bot_token)
+    if settings.telegram_api_base_url:
+        builder = builder.base_url(settings.telegram_api_base_url)
+    if settings.telegram_api_base_file_url:
+        builder = builder.base_file_url(settings.telegram_api_base_file_url)
+
+    application = builder.build()
     application.bot_data["state"] = BotState(settings)
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("id", user_id))
@@ -457,11 +487,12 @@ def main() -> None:
     configure_logging(settings)
     application = build_application(settings)
     LOGGER.info(
-        "starting m3u8 saver bot data_dir=%s temp_dir=%s log_file=%s transcode=%s accel=%s",
+        "starting m3u8 saver bot data_dir=%s temp_dir=%s log_file=%s transcode=%s accel=%s api_base_url=%s",
         settings.data_dir,
         settings.temp_dir,
         settings.log_file,
         settings.transcode_video,
         settings.preferred_accel,
+        settings.telegram_api_base_url or "public",
     )
     application.run_polling(allowed_updates=Update.ALL_TYPES)

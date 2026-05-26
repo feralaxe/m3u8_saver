@@ -20,11 +20,14 @@ def _bool(value: str | None, default: bool = False) -> bool:
 @dataclass(frozen=True)
 class Settings:
     telegram_bot_token: str
+    telegram_api_base_url: str
+    telegram_api_base_file_url: str
     admin_user_ids: set[int]
     permanent_allowed_user_ids: set[int]
     data_dir: Path
     temp_dir: Path
     max_video_bytes: int
+    telegram_max_upload_bytes: int
     ffmpeg_timeout_seconds: int
     http_timeout_seconds: float
     transcode_video: bool
@@ -55,11 +58,14 @@ def load_settings() -> Settings:
 
     return Settings(
         telegram_bot_token=token,
+        telegram_api_base_url=os.getenv("TELEGRAM_API_BASE_URL", "").strip(),
+        telegram_api_base_file_url=os.getenv("TELEGRAM_API_BASE_FILE_URL", "").strip(),
         admin_user_ids=_csv_ints(os.getenv("ADMIN_USER_IDS")),
         permanent_allowed_user_ids=_csv_ints(os.getenv("PERMANENT_ALLOWED_USER_IDS")),
         data_dir=data_dir,
         temp_dir=temp_dir,
         max_video_bytes=int(os.getenv("MAX_VIDEO_BYTES", str(2 * 1024 * 1024 * 1024))),
+        telegram_max_upload_bytes=int(os.getenv("TELEGRAM_MAX_UPLOAD_BYTES", str(50 * 1000 * 1000))),
         ffmpeg_timeout_seconds=int(os.getenv("FFMPEG_TIMEOUT_SECONDS", "7200")),
         http_timeout_seconds=float(os.getenv("HTTP_TIMEOUT_SECONDS", "20")),
         transcode_video=_bool(os.getenv("TRANSCODE_VIDEO"), False),

@@ -19,6 +19,10 @@ class YouTubeError(RuntimeError):
     pass
 
 
+def _format_bytes(size: int) -> str:
+    return f"{size / (1024 * 1024):.1f} MB"
+
+
 @dataclass(frozen=True)
 class YouTubeQuality:
     id: str
@@ -161,7 +165,10 @@ def _download_sync(
     size = output_path.stat().st_size
     if size > max_video_bytes:
         output_path.unlink(missing_ok=True)
-        raise YouTubeError(f"video is too large: {size} bytes")
+        raise YouTubeError(
+            f"Downloaded file is {_format_bytes(size)}, above the configured limit "
+            f"of {_format_bytes(max_video_bytes)}. Try a lower quality."
+        )
 
     return output_path
 
